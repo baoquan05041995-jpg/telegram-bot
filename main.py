@@ -1,0 +1,148 @@
+from telegram.ext import Updater, MessageHandler, Filters, CommandHandler
+from googletrans import Translator
+import datetime
+import os
+
+# Config
+TOKEN = "8277628961:AAG44Qlh43dFgRBA_Bf2HyybH5GndKU9A9c"          # thay bằng token bot của bạn
+ADMIN_CHANNEL_ID = -1003112470673  # thay bằng ID group/kênh để nhận log
+ADMIN_ID = 1856285251              # thay bằng user_id Telegram của bạn
+
+translator = Translator()
+LOG_FILE = "chat_log.txt"
+USERS_FILE = "users.txt"
+
+def log_message(user, text, context):
+    """Ghi log tin nhắn và gửi về admin channel"""
+    time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{time}] user_id={user.id}, username={user.username}, name={user.first_name} {user.last_name}, text={text}\n"
+    
+    # Lưu log file
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(line)
+
+    # Cập nhật danh sách user
+    users = {}
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            for l in f:
+                uid, uname, name = l.strip().split("|", 2)
+                users[uid] = (uname, name)
+
+    users[str(user.id)] = (user.username or "", f"{user.first_name or ''} {user.last_name or ''}".strip())
+
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        for uid, (uname, name) in users.items():
+            f.write(f"{uid}|{uname}|{name}\n")
+
+    # Gửi thông báo về admin channel
+    msg = (f"📩 Log mới:\n"
+           f"👤 {user.first_name} {user.last_name} (@{user.username})\n"
+           f"🆔 ID: {user.id}\n"
+           f"💬 Nội dung: {text}")
+    try:
+        context.bot.send_message(chat_id=ADMIN_CHANNEL_ID, text=msg)
+    except Exception as e:
+        print("Không gửi được log về admin:", e)
+
+def start(update, context):
+    user = update.message.from_user
+    log_message(user, "/start", context)
+    update.message.reply_text(
+        "Hello I am a translation robot! 👋\n"
+        "👉 Vietnamese → translate to Persian, English, Spanish (3 messages).\n"
+        "👉 English → translate to Vietnamese, Persian, Spanish (3 messages).\n"
+        "👉 Spanish / Persian / other languages → translate to Vietnamese / English (3 messages)."
+    )
+
+def show_users(update, context):
+    if update.message.from_user.id != ADMIN_ID:
+        return  # bỏ qua nếu không phải admin
+
+    if not os.path.exists(USERS_FILE):
+        update.message.reply_text("Chưa có ai chat với bot.")
+        return
+
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    if not lines:
+        update.message.reply_text("Chưa có ai chat với bot.")
+        return
+
+    reply = "📋 Danh sách user đã chat:\n\n"
+    for line in lines:
+        uid, uname, name = line.strip().split("|", 2)
+        reply += f"- {name} (id: {uid}, username: {uname})\n"
+
+    update.message.reply_text(reply)
+
+def show_logs(update, context):
+    if update.message.from_user.id != ADMIN_ID:
+        return  # bỏ qua nếu không phải admin
+
+    if not os.path.exists(LOG_FILE):
+        update.message.reply_text("Chưa có log nào.")
+        return
+
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        logs = f.read()
+
+    if not logs:
+        update.message.reply_text("Chưa có log nào.")
+    else:
+        if len(logs) > 3500:
+            update.message.reply_text("📄 Log dài, hiển thị phần cuối:\n\n" + logs[-3500:])
+        else:
+            update.message.reply_text("📄 Log hội thoại:\n\n" + logs)
+
+def translate_message(update, context):
+    user = update.message.from_user
+    text = update.message.text
+    log_message(user, text, context)
+
+    try:
+        detected = translator.detect(text).lang
+
+        if detected == 'vi':
+            fa = translator.translate(text, src='vi', dest='fa').text
+            en = translator.translate(text, src='vi', dest='en').text
+            es = translator.translate(text, src='vi', dest='es').text
+
+            update.message.reply_text(fa)
+            update.message.reply_text(en)
+            update.message.reply_text(es)
+
+        elif detected == 'en':
+            vi = translator.translate(text, src='en', dest='vi').text
+            es = translator.translate(text, src='en', dest='es').text
+            fa = translator.translate(text, src='en', dest='fa').text
+
+            update.message.reply_text(vi)
+            update.message.reply_text(es)
+            update.message.reply_text(fa)
+
+        else:
+            vi = translator.translate(text, dest='vi').text
+            en = translator.translate(text, dest='en').text
+
+            update.message.reply_text(vi)
+            update.message.reply_text(en)
+
+    except Exception as e:
+        update.message.reply_text("❌ Lỗi dịch: " + str(e))
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("users", show_users))
+    dp.add_handler(CommandHandler("logs", show_logs))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, translate_message))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
